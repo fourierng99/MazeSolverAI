@@ -27,7 +27,7 @@ class MazeSolver:
         self.screen_block_offset = self.rect[0:2] + (self.rect[2:4] - self.screen_block_size * np.flip(self.block_size)) // 2
         self.prev_update = 0
         self.running = True
-        self.screen_info = pygame.Surface((1100, 70))
+        self.screen_info = pygame.Surface((1100, 90))
 
         self.junctions = np.zeros((100, 7), dtype=np.int16)  # will store the junction cell, the cell before that, distance to end, and nr of directions to go
         self.junction_nr = -1
@@ -53,33 +53,37 @@ class MazeSolver:
         self.bfs_path_color = (136, 3, 252)
         self.dfs_path_color = (3, 161, 252)
         self.a_star_path_color = (252, 103, 3)
+        self.a_dfs_hybrid_color = (200, 200, 0)
 
         self.bfs_solution_color = (252, 3, 152)
         self.dfs_solution_color = (45, 3, 252)
         self.a_star_solution_color = (3, 252, 107)
-
-        self.is_playable = True
+        self.a_dfs_hybrid_solution_color = (240, 50, 50)
+        self.is_save_img = False
 
     def solve_maze(self):
-        self.slow_mode = True
-        self.solution_type = 3
-        run_all = False
+        #self.slow_mode = True
+        #self.solution_type = 4
+
         start_pos = np.copy(self.start_pos)
         end_pos = np.copy(self.end_pos)
         blocks = np.copy(self.blocks)
 
         if(np.array_equal(self.start_pos, self.end_pos)):
             return
-        if self.solution_type == 0:
+        if self.solution_type == 9:
             self.solve_maze_sample()
-        elif self.solution_type == 1:
+        elif self.solution_type == 0:
             self.solve_maze_bfs()
-        elif self.solution_type == 2:
+        elif self.solution_type == 1:
             self.solve_maze_dfs() 
+        elif self.solution_type == 2:
+            self.solve_maze_a_star()
         elif self.solution_type == 3:
-            self.solve_maze_a_star() 
-
-        if run_all:
+            self.solve_maze_dfs_hybrid()
+        elif self.solution_type == 4:
+            self.solve_maze_greedy()
+        elif self.solution_type == 5:
             self.start_pos =np.copy(start_pos)
             self.end_pos = np.copy(end_pos)
             self.blocks = np.copy(blocks)
@@ -98,7 +102,14 @@ class MazeSolver:
             self.start_pos =np.copy(start_pos)
             self.end_pos = np.copy(end_pos)
             self.blocks = np.copy(blocks)
-            self.solve_maze_sample()
+            self.solve_maze_dfs_hybrid()
+
+            self.start_pos =np.copy(start_pos)
+            self.end_pos = np.copy(end_pos)
+            self.blocks = np.copy(blocks)
+            self.solve_maze_greedy()
+
+        
 
         self.draw_cell(start_pos, start_pos, self.start_color)
         self.draw_cell(end_pos, end_pos, self.end_color)
@@ -108,7 +119,9 @@ class MazeSolver:
             print('Start and end positions must not be in a wall.')
             self.running = False
             return
-        
+
+        self.save_image()
+        i_cnt = 0
         cell = np.copy(self.start_pos)
         previous = np.copy(cell)
 
@@ -135,7 +148,7 @@ class MazeSolver:
                 break
             current_index = 0
             for i in range(0, len(open_list)):
-                if sum(open_heuristics[i]) < sum(open_heuristics[current_index]):
+                if sum(open_heuristics[i]) <= sum(open_heuristics[current_index]):
                     current_index = i
                 # if open_heuristics[i][1] < open_heuristics[current_index][1]:
                 #     current_index = i
@@ -143,9 +156,94 @@ class MazeSolver:
             cell = open_list.pop(current_index)
             heuristics = open_heuristics.pop(current_index)
             close_list.append(cell)
-
+            
             #if(not np.array_equal(cell, self.end_pos)):
 
+            previous = np.copy(cell)
+            self.draw_cell(cell, previous, self.a_star_path_color)
+
+            self.blocks[cell[0], cell[1]] = 2
+
+            cell_neighbors = np.hstack((
+                cell + directions,
+                np.sum((self.end_pos - cell) * directions, axis=1)[:, None]
+                ))
+            valid_neighbors = cell_neighbors[(self.blocks[cell_neighbors[:, 0], cell_neighbors[:, 1]] == 0)]
+            #print(valid_neighbors, "xxx", open_list)
+            for nb in valid_neighbors:
+                for i in range(len(open_list)):
+                    if(np.array_equal(open_list[i], nb[:2])):
+                        print(open_list[i])
+                open_list.append(nb[:2])
+                n_heuristic = np.zeros(2)
+                n_heuristic[0] = heuristics[0] +1
+                n_heuristic[1] = int(np.sqrt(np.sum((self.end_pos - cell) ** 2)))
+                open_heuristics.append(n_heuristic)
+                trace_mat[nb[0], nb[1]] = previous
+            
+            i_cnt += 1
+            if i_cnt > 50:
+                i_cnt = 0
+                pygame.display.flip()
+                self.save_image()
+
+        pygame.display.flip()
+        self.save_image()
+        i_cnt = 0
+
+        t_cell = self.end_pos
+        prev = np.copy(t_cell)
+        while(not np.array_equal(t_cell, self.start_pos)):
+            self.draw_cell(t_cell, prev, self.a_star_solution_color)
+            prev = np.copy(t_cell)
+            t_cell = trace_mat[t_cell[0], t_cell[1]]
+
+            i_cnt += 1
+            if i_cnt > 50:
+                i_cnt = 0
+                pygame.display.flip()
+                self.save_image()
+        
+        self.blocks[cell[0], cell[1]] = 4  # mark starting cell as route
+        # ensure display is updated
+        pygame.display.flip()
+
+        self.save_image()
+
+    def solve_maze_greedy(self):
+        if self.blocks[self.start_pos[0], self.start_pos[1]] != 0 or self.blocks[self.end_pos[0], self.end_pos[1]] != 0:
+            print('Start and end positions must not be in a wall.')
+            self.running = False
+            return
+
+        self.save_image()
+        i_cnt = 0
+        cell = np.copy(self.start_pos)
+        previous = np.copy(cell)
+
+        directions = np.array([
+            [-1,  0],  # up
+            [ 1,  0],  # down
+            [ 0, -1],  # left
+            [ 0,  1]   # right
+            ], dtype=np.int16)
+        
+        open_list = []
+
+        open_list.append(cell)
+
+        close_list = []
+
+        trace_mat = np.ones((self.block_size[0], self.block_size[1], 2), dtype=np.int16)*-1
+        trace_mat[cell[0], cell[1]] = cell
+
+        while self.running and (not np.array_equal(cell, self.end_pos)):
+            if len(open_list) == 0:
+                break
+            open_list.sort(reverse=True, key = lambda x : np.sum((self.end_pos - x) ** 2 ))
+            cell = open_list.pop()
+
+            close_list.append(cell)
             previous = np.copy(cell)
             self.draw_cell(cell, previous, self.a_star_path_color)
 
@@ -159,11 +257,17 @@ class MazeSolver:
 
             for nb in valid_neighbors:
                 open_list.append(nb[:2])
-                n_heuristic = np.zeros(2)
-                n_heuristic[0] = heuristics[0] +1
-                n_heuristic[1] = int(np.sqrt(np.sum((self.end_pos - cell) ** 2)))
-                open_heuristics.append(n_heuristic)
                 trace_mat[nb[0], nb[1]] = previous
+            
+            i_cnt += 1
+            if i_cnt > 50:
+                i_cnt = 0
+                pygame.display.flip()
+                self.save_image()
+
+        pygame.display.flip()
+        self.save_image()
+        i_cnt = 0
 
         t_cell = self.end_pos
         prev = np.copy(t_cell)
@@ -172,12 +276,29 @@ class MazeSolver:
             prev = np.copy(t_cell)
             t_cell = trace_mat[t_cell[0], t_cell[1]]
 
+            i_cnt += 1
+            if i_cnt > 50:
+                i_cnt = 0
+                pygame.display.flip()
+                self.save_image()
+        
+        self.blocks[cell[0], cell[1]] = 4  # mark starting cell as route
+        # ensure display is updated
+        pygame.display.flip()
+
+        self.save_image()
+
     def solve_maze_bfs(self):
         if self.blocks[self.start_pos[0], self.start_pos[1]] != 0 or self.blocks[self.end_pos[0], self.end_pos[1]] != 0:
             print('Start and end positions must not be in a wall.')
             self.running = False
             return
         
+        self.save_image()
+        i_cnt = 0
+        cell = np.copy(self.start_pos)
+        previous = np.copy(cell)
+
         cell = np.copy(self.start_pos)
         previous = np.copy(cell)
 
@@ -201,8 +322,6 @@ class MazeSolver:
             cell = open_list.pop()
             close_list.append(cell)
 
-            #if(not np.array_equal(cell, self.end_pos)):
-
             previous = np.copy(cell)
             if(not np.array_equal(cell, self.start_pos) or not np.array_equal(cell, self.end_pos)):
                 self.draw_cell(cell, previous, self.bfs_path_color)
@@ -219,14 +338,36 @@ class MazeSolver:
                 open_list.insert(0,nb[:2])
                 trace_mat[nb[0], nb[1]] = previous
 
+            i_cnt += 1
+            if i_cnt > 50:
+                i_cnt = 0
+                pygame.display.flip()
+                self.save_image()
+
+        pygame.display.flip()
+        self.save_image()
+        i_cnt = 0
+
         t_cell = self.end_pos
         prev = np.copy(t_cell)
+        
         while(not np.array_equal(t_cell, self.start_pos)):
             t_cell = trace_mat[t_cell[0], t_cell[1]]
             prev = np.copy(t_cell)
-            if(np.array_equal(cell, self.start_pos) or np.array_equal(cell, self.end_pos)):
-                continue
+            # if(np.array_equal(t_cell, self.start_pos) or np.array_equal(t_cell, self.end_pos)):
+            #     continue
             self.draw_cell(t_cell, prev, self.bfs_solution_color)
+            i_cnt += 1
+            if i_cnt > 50:
+                i_cnt = 0
+                pygame.display.flip()
+                self.save_image()
+
+        self.blocks[cell[0], cell[1]] = 4  # mark starting cell as route
+        # ensure display is updated
+        pygame.display.flip()
+
+        self.save_image()
 
     def solve_maze_dfs(self):
         if self.blocks[self.start_pos[0], self.start_pos[1]] != 0 or self.blocks[self.end_pos[0], self.end_pos[1]] != 0:
@@ -234,6 +375,11 @@ class MazeSolver:
             self.running = False
             return
         
+        self.save_image()
+        i_cnt = 0
+        cell = np.copy(self.start_pos)
+        previous = np.copy(cell)
+
         cell = np.copy(self.start_pos)
         previous = np.copy(cell)
 
@@ -273,16 +419,126 @@ class MazeSolver:
                 open_list.append(nb[:2])
                 trace_mat[nb[0], nb[1]] = previous
 
+            i_cnt += 1
+            if i_cnt > 50:
+                i_cnt = 0
+                pygame.display.flip()
+                self.save_image()
+
+        pygame.display.flip()
+        self.save_image()
+        i_cnt = 0
+
         t_cell = self.end_pos
         prev = np.copy(t_cell)
         while(not np.array_equal(t_cell, self.start_pos)):
             self.draw_cell(t_cell, prev, self.dfs_solution_color)
             prev = np.copy(t_cell)
             t_cell = trace_mat[t_cell[0], t_cell[1]]
-                
+
+            i_cnt += 1
+            if i_cnt > 50:
+                i_cnt = 0
+                pygame.display.flip()
+                self.save_image()     
                     
+        self.blocks[cell[0], cell[1]] = 4  # mark starting cell as route
+        # ensure display is updated
+        pygame.display.flip()
+
+        self.save_image()
+
+    def solve_maze_dfs_hybrid(self):
+        if self.blocks[self.start_pos[0], self.start_pos[1]] != 0 or self.blocks[self.end_pos[0], self.end_pos[1]] != 0:
+            print('Start and end positions must not be in a wall.')
+            self.running = False
+            return
+        
+        self.save_image()
+        i_cnt = 0
+        cell = np.copy(self.start_pos)
+        previous = np.copy(cell)
+
+        cell = np.copy(self.start_pos)
+        previous = np.copy(cell)
+
+        directions = np.array([
+            [-1,  0],  # up
+            [ 1,  0],  # down
+            [ 0, -1],  # left
+            [ 0,  1]   # right
+            ], dtype=np.int16)
+        
+        open_list = []
+        open_list.append(cell)
+        close_list = []
+
+        trace_mat = np.ones((self.block_size[0], self.block_size[1], 2), dtype=np.int16)*-1
+        trace_mat[cell[0], cell[1]] = cell
+
+        while self.running and (not np.array_equal(cell, self.end_pos)):
+            if len(open_list) == 0:
+                break
+            cell = open_list.pop()
+            close_list.append(cell)
+
+            #if(not np.array_equal(cell, self.end_pos)):
+
+            previous = np.copy(cell)
+            self.draw_cell(cell, previous, self.a_dfs_hybrid_color)
+
+            self.blocks[cell[0], cell[1]] = 2
+
+            cell_neighbors = np.hstack((
+                cell + directions,
+                np.sum((self.end_pos - cell) * directions, axis=1)[:, None]
+                ))
+            valid_neighbors = cell_neighbors[(self.blocks[cell_neighbors[:, 0], cell_neighbors[:, 1]] == 0)]
+
+            nb_count = np.shape(valid_neighbors)[0]
+            if nb_count >= 1:
+                valid_lst = [x[0:2] for x in valid_neighbors]
+                valid_lst.sort(reverse = True,key = lambda x: sum((self.end_pos - x) ** 2))
+                for nb in valid_lst:
+                    open_list.append(nb[:2])
+                    trace_mat[nb[0], nb[1]] = previous
+            else:
+                lst_distance = [sum((self.end_pos - x) ** 2) for x in open_list]
+                ix = np.argmin(lst_distance)
+                e = open_list.pop(ix)
+                open_list.append(e)
+            i_cnt += 1
+            if i_cnt > 50:
+                i_cnt = 0
+                pygame.display.flip()
+                self.save_image()
+
+        pygame.display.flip()
+        self.save_image()
+        print(i_cnt)
+        i_cnt = 0
+
+        t_cell = self.end_pos
+        prev = np.copy(t_cell)
+        while(not np.array_equal(t_cell, self.start_pos)):
+            self.draw_cell(t_cell, prev, self.a_dfs_hybrid_solution_color)
+            prev = np.copy(t_cell)
+            t_cell = trace_mat[t_cell[0], t_cell[1]]
+
+            i_cnt += 1
+            if i_cnt > 50:
+                i_cnt = 0
+                pygame.display.flip()
+                self.save_image()     
+                    
+        self.blocks[cell[0], cell[1]] = 4  # mark starting cell as route
+        # ensure display is updated
+        pygame.display.flip()
+
+        self.save_image()
 
     def solve_maze_sample(self):
+
         # solves a maze.
 
         # first check that solving is possible
@@ -314,14 +570,15 @@ class MazeSolver:
                 cell + directions,
                 np.sum((self.end_pos - cell) * directions, axis=1)[:, None]
                 ))
+            
             # pick the ones which are corridors and not visited yet
             valid_neighbors = cell_neighbors[(self.blocks[cell_neighbors[:, 0], cell_neighbors[:, 1]] == 0)]
             vn_count = np.shape(valid_neighbors)[0]
+
             if vn_count > 1:
                 # multiple directions available - add the cell to the junctions stack
                 # if there are three valid neighbors, not to worry - the third one will be taken care of if this junction is returned to
                 self.junction_nr += 1
-                
                 # make sure there is enough stack
                 if self.junction_nr >= np.shape(self.junctions)[0]:
                     self.junctions = np.resize(self.junctions, (self.junction_nr + 100, 6))
@@ -442,6 +699,12 @@ class MazeSolver:
         # switch between a windowed display and full screen
         self.slow_mode = not(self.slow_mode)
         self.plot_info(self.last_message)
+    
+    def toggle_save_mode(self):
+
+        # switch between a windowed display and full screen
+        self.is_save_img = not(self.is_save_img)
+        self.plot_info(self.last_message)
 
     def plot_info(self, phase_msg):
 
@@ -462,6 +725,13 @@ class MazeSolver:
             else:
                 info_msg = 'm:     Slow mode ON/OFF (off)'
             y = self.plot_info_msg(self.screen_info, x, y, info_msg)
+
+            if self.is_save_img:
+                info_msg = 'x:     Save image ON/OFF (on)'
+            else:
+                info_msg = 'x:     Save image ON/OFF (off)'
+            y = self.plot_info_msg(self.screen_info, x, y, info_msg)
+
             info_msg = 's:     Save .png image'
             y = self.plot_info_msg(self.screen_info, x, y, info_msg)
             info_msg = 'ESC:   Exit'
@@ -469,13 +739,13 @@ class MazeSolver:
             y = 0
             x = 310
             pygame.draw.line(self.screen_info, self.info_color, (x - 10, y), (x - 10, y + 75))
-            info_msg = 'Space:       Solve maze / next maze'
+            info_msg = 'Space:  Solve maze / next maze'
             y = self.plot_info_msg(self.screen_info, x, y, info_msg)
-            info_msg = 'Cursor up:   Increase cell size'
+            info_msg = 'd:      Increase cell size'
             y = self.plot_info_msg(self.screen_info, x, y, info_msg)
-            info_msg = 'Cursor down: Decrease cell size'
+            info_msg = 'a:      Decrease cell size'
             y = self.plot_info_msg(self.screen_info, x, y, info_msg)
-            info_msg = 'Mouse:       Select start & end'
+            info_msg = 'Mouse:  Select start & end'
             y = self.plot_info_msg(self.screen_info, x, y, info_msg)
             y = 0
             x = 700
@@ -536,10 +806,11 @@ class MazeSolver:
         pygame.display.flip()
 
     def save_image(self):
-        return
+        if not self.is_save_img:
+            return
         # save maze as a png image. Use the first available number to avoid overwriting a previous image.
         for file_nr in range(1, 1000):
-            file_name = 'Mazegif_' + ('00' + str(file_nr))[-3:] + '.png'
+            file_name = 'img/Mazegif_' + ('00' + str(file_nr))[-3:] + '.png'
             if not exists(file_name):
                 pygame.image.save(self.screen, file_name)
                 break
@@ -583,6 +854,8 @@ class MazeSolver:
                     self.toggle_info_display()  
                 if event.key == pygame.K_m:
                     self.toggle_slow_mode()
+                if event.key == pygame.K_x:
+                    self.toggle_save_mode()
                 if event.key == pygame.K_a:
                     self.cell_size -= 1
                     if self.cell_size < 1:
@@ -596,7 +869,16 @@ class MazeSolver:
                 if event.key == pygame.K_ESCAPE:
                     pausing = False
                     running = False
-
+                if event.key == pygame.K_0:
+                    self.solution_type = 0
+                elif event.key == pygame.K_1:
+                    self.solution_type = 1
+                elif event.key == pygame.K_2:
+                    self.solution_type = 2
+                elif event.key == pygame.K_3:
+                    self.solution_type = 3
+                elif event.key == pygame.K_4:
+                    self.solution_type = 4
                 if event.key == pygame.K_UP:
                     self.set_pos_start(self.start_pos[0]-1, self.start_pos[1])
                 elif event.key == pygame.K_DOWN:
@@ -642,7 +924,7 @@ if __name__ == '__main__':
     disp_size = (1280, 720)
     info_display = False
     screen = pygame.display.set_mode(disp_size)
-    pygame.display.set_caption('Maze Solver / KS 2022. Left Mouse Button to Continue.')
+    pygame.display.set_caption('Magic Maze by Team 11')
     running = True
 
     # initialize maze solver with bogus data to make it available
@@ -650,7 +932,20 @@ if __name__ == '__main__':
     maze_solver.info_display = info_display
     maze_solver.cell_size =20  # cell size in pixels
 
-
+    is_menu = True
+    spriteTitle = pygame.image.load('TestTitle.png')
+    while is_menu:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                game_over = True
+            pressed = pygame.key.get_pressed()
+            if pressed[pygame.K_SPACE]:
+                is_menu = False
+            if pressed[pygame.K_ESCAPE]:
+                pygame.quit()
+        screen.fill((0,0,0))
+        screen.blit(spriteTitle, (0,0))
+        pygame.display.update()
     while running:
 
         # intialize a maze, given size (y, x)
@@ -683,8 +978,8 @@ if __name__ == '__main__':
             prev_msg = maze_solver.last_message
             prev_mode = maze_solver.slow_mode
             prev_info = maze_solver.info_display
-            start_pos = np.asarray(np.shape(blocks), dtype=np.int) - 2  # bottom right corner
-            end_pos = np.array([1, 1], dtype=np.int)
+            end_pos = np.asarray(np.shape(blocks), dtype=np.int) - 2  # bottom right corner
+            start_pos = np.array([1, 1], dtype=np.int)
 
             maze_solver = MazeSolver(screen, rect, blocks, start_pos, end_pos)
 
